@@ -1,6 +1,6 @@
 name: Card catalog localization
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       mode:
