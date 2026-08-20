@@ -1,0 +1,86 @@
+name: Card catalog localization
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "probe = 2 cards, test = 50 cards, batch = one resumable production batch"
+        required: true
+        default: probe
+        type: choice
+        options: [probe, test, batch]
+      batch_index:
+        description: "Zero-based batch index; used only in batch mode"
+        required: false
+        default: "0"
+        type: string
+      batch_size:
+        description: "Cards per production batch; used only in batch mode"
+        required: false
+        default: "200"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: card-localization-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  localize:
+    # Public repositories use the free GitHub-hosted standard-runner allowance.
+    # Refuse private repositories so this workflow cannot consume billable minutes.
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU-only open-source translation engine
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r tools/localization/requirements.txt
+      - name: Verify immutable English Master
+        run: |
+          echo "46036a854b5889132a4f9699f3918d9c577bcc1b4a95e5f0c5ecc8680c866952  tools/localization/input/english_master.json" | sha256sum --check --strict
+      - name: Restore latest successful checkpoint
+        uses: actions/cache/restore@v4
+        with:
+          path: artifacts/card-localization
+          key: card-localization-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            card-localization-${{ github.ref_name }}-
+      - name: Run selected localization stage
+        env:
+          MODE: ${{ inputs.mode }}
+          BATCH_INDEX: ${{ inputs.batch_index }}
+          BATCH_SIZE: ${{ inputs.batch_size }}
+        run: |
+          if [ "$MODE" = "probe" ]; then
+            python tools/localization/translate_catalog.py --master tools/localization/input/english_master.json --output artifacts/card-localization --mode probe --run-id "$GITHUB_RUN_ID"
+          elif [ "$MODE" = "test" ]; then
+            python tools/localization/translate_catalog.py --master tools/localization/input/english_master.json --output artifacts/card-localization --mode test --run-id "$GITHUB_RUN_ID"
+          else
+            python tools/localization/translate_catalog.py --master tools/localization/input/english_master.json --output artifacts/card-localization --mode batch --batch-index "$BATCH_INDEX" --batch-size "$BATCH_SIZE" --run-id "$GITHUB_RUN_ID"
+          fi
+      - name: Upload localization artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: card-localization-${{ inputs.mode }}-${{ github.run_id }}
+          path: artifacts/card-localization
+          if-no-files-found: error
+          retention-days: 90
+      - name: Save successful checkpoint
+        if: ${{ success() }}
+        uses: actions/cache/save@v4
+        with:
+          path: artifacts/card-localization
+          key: card-localization-${{ github.ref_name }}-${{ github.run_id }}
