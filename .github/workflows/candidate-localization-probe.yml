@@ -1,0 +1,35 @@
+name: Candidate localization comparison probe
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU-only probe dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r tools/localization/requirements.txt
+      - name: Run non-production candidate comparison
+        run: python tools/localization/candidate_probe.py
+      - name: Upload comparison artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-localization-probe-${{ github.run_id }}
+          path: artifacts/candidate-localization-probe
+          if-no-files-found: error
+          retention-days: 30
